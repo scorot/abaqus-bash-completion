@@ -1,6 +1,5 @@
 # shellcheck shell=bash
 # bash completion for abaqus
-set +x
 
 _abaqus_completion() {
     local cur prev

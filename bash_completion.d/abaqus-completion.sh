@@ -12,50 +12,51 @@ _abaqus_completion() {
     # Main subcommands
     local subcommands="
     help
-	-information
+    -information
     -job
-	cse
-	cosimulation
-	fmu
-	cae
-	viewver
-	optimization
-	python
-	-script
-	doc
-	licensing
-	ascfil
-	append
-	findkeyword
-	fetch
-	make
-	redistadb
-	upgrade
-	sim_version
-	odb2sim
-	odbreport
-	restartjoin
-	substructurecombine
-	substructurerecover
-	odbcombine
-	emloads
-	mtxasm
-	fromnastran
-	tonastran
-	fromansys
-	frompamcrash
-	fromradioss
-	toOutput2
-	fromdyna
-	tozaero
-	adams
-	tosimpack
-	fromsimpack
-	toexcite
-	moldflow
-	encrypt
-	decrypt
-	sysVerify
+    cse
+    cosimulation
+    fmu
+    cae
+    viewver
+    optimization
+    python
+    -script
+    doc
+    licensing
+    ascfil
+    append
+    findkeyword
+    fetch
+    make
+    redistadb
+    upgrade
+    sim_version
+    odb2sim
+    odbreport
+    restartjoin
+    substructurecombine
+    substructurerecover
+    odbcombine
+    emloads
+    mtxasm
+    fromnastran
+    tonastran
+    fromansys
+    frompamcrash
+    fromradioss
+    toOutput2
+    fromdyna
+    tozaero
+    adams
+    tosimpack
+    fromsimpack
+    toexcite
+    moldflow
+    encrypt
+    decrypt
+    sysVerify
+    whereami
     "
 
     # Options principales
@@ -693,7 +694,7 @@ _abaqus_completion() {
         COMPREPLY=( $(compgen -W "$restartjoin_opts" -- "$cur") )
 
         # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
+        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]|-|--)' | tr '\n' ' ')
         COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
        return 0
     fi
@@ -797,13 +798,13 @@ _abaqus_completion() {
     if [[ " ${COMP_WORDS[*]} " == *" tonastran "* ]]; then
 
         local tonastran_opts="-job
-                            -input
-                            -bdf_format
-                            sim2dmig
-                            -complex"
+                              -input
+                              -bdf_format
+                              sim2dmig
+                              -complex"
 
-        if [[ "$prev" == "-script" ]]; then
-           COMPREPLY=( $(compgen -f -X '!*.psf' -- "$cur") )
+        if [[ "$prev" == "tonastran" ]]; then
+           COMPREPLY=( $(compgen $tonastran_opts -- "$cur") )
            return 0
         fi
 
@@ -828,7 +829,7 @@ _abaqus_completion() {
         COMPREPLY=($(compgen -W "${tonastran_opts}" -- "$cur"))
  
         # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
+        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]|-|--)' | tr '\n' ' ')
         COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
         return 0
     fi
@@ -860,8 +861,8 @@ _abaqus_completion() {
                                -op2target
                                "
 
-       if [[ "$prev" == "-script" ]]; then
-           COMPREPLY=( $(compgen -f -X '!*.psf' -- "$cur") )
+       if [[ "$prev" == "-fromnastran" ]]; then
+           COMPREPLY=( $(compgen -W "$fromnastran_opts" -- "$cur") )
            return 0
        fi
 
@@ -871,7 +872,11 @@ _abaqus_completion() {
               return 0
               ;;
             -input)
-                COMPREPLY=( $(compgen -f -- "$cur") )
+                COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.bdf$|\.nas$|\.dat$" ) )
+                return 0
+                ;;
+            -wtmass_fixup)
+                COMPREPLY=( $(compgen -W "ON OFF" -- "$cur") )
                 return 0
                 ;;
             -loadcases)
@@ -952,18 +957,28 @@ _abaqus_completion() {
     fi
 
 
+    ###############################################
+    # whereami
+    ###############################################
+    if [[ " ${COMP_WORDS[*]} " == *" whereami "* ]]; then
+        COMPREPLY=( )
+        return 0
+    fi
+
+
     case "$prev" in
         -job|-input)
             COMPREPLY=( $(compgen -f -X '!*.inp' -- "$cur") )
             return 0
             ;;
 
-	    -oldjob)
+        -oldjob)
             COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
             return 0
-            ;;	
+            ;;    
+
         -user)
-            COMPREPLY=( $(compgen -W "source-file object-file" -- "$cur") )
+            COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.f$|\.c$|\.o$" ) )
             return 0
             ;;
 
@@ -973,7 +988,7 @@ _abaqus_completion() {
             ;;
 
         -globalmodel)
-            COMPREPLY=( $(compgen -W "results ODB SIM" -- "$cur") )
+            COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.odb$|\.sim$" ) )
             return 0
             ;;
 
@@ -1047,19 +1062,12 @@ _abaqus_completion() {
             return 0
             ;;
 
-        -information)
-            COMPREPLY=( $(compgen -W "environment local memory release support system all" -- "$cur") )
-            return 0
-            ;;
-
         -queue)
             local queues
             queues="$(scontrol -o show partitions | grep -Po 'PartitionName=\S+' | cut -d'=' -f2 | tr '\n' ' ')"
             [[ -z "$queues" ]] && queues="small short big"
-
-			COMPREPLY=( $(compgen -W "$queues" -- "$cur") )
-			return 0
-
+            COMPREPLY=( $(compgen -W "help hold $queues" -- "$cur") )
+            return 0
             ;;
     esac
 
@@ -1072,4 +1080,3 @@ _abaqus_completion() {
 }
 
 complete -F _abaqus_completion abq2024 abq2023 abq2022 abaqus
-

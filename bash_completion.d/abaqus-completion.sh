@@ -241,6 +241,10 @@ _abaqus_completion() {
         fi
 
         case "$prev" in
+            -task)
+                COMPREPLY=( $(compgen -f -- "$cur") )
+                return 0
+                ;;
             -job)
                 COMPREPLY=( $(compgen -d -- "$cur") )
                 return 0
@@ -258,7 +262,7 @@ _abaqus_completion() {
                 return 0
                 ;;
             -globalmodel)
-                COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
+                COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.odb$|\.sim$" ) )
                 return 0
                 ;;
             -scratch)

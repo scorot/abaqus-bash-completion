@@ -18,7 +18,7 @@ _abaqus_completion() {
     cosimulation
     fmu
     cae
-    viewver
+    viewer
     optimization
     python
     -script
@@ -128,7 +128,7 @@ _abaqus_completion() {
     if [[ " ${COMP_WORDS[*]} " == *" cae "* ]] || [[ " ${COMP_WORDS[*]} " == *" viewer "* ]] ; then
         local cae_opts="-database
                         -replay
-                        -recover
+                        -startup
                         -script
                         -noGUI
                         noenvstartup
@@ -141,22 +141,32 @@ _abaqus_completion() {
                         guiNoRecord
                         "
 
-        if [[ "$prev" == "cae" ]] || [[ "$prev" == "viewer" ]]; then
+        if [[ "$prev" == "viewer" ]]; then
             COMPREPLY=( $(compgen -W "$cae_opts" -- "$cur") )
+            return 0
+        fi
+
+        if [[ "$prev" == "cae" ]]; then
+            # cae has an additionnal option -recover
+            COMPREPLY=( $(compgen -W "-recover $cae_opts" -- "$cur") )
             return 0
         fi
 
         case "$prev" in
             -database)
-                COMPREPLY=( $( compgen -f -- "$cur") )
+                COMPREPLY=( $( compgen -f -X '!*.odb' -- "$cur") )
+                return 0
+                ;;
+            -recover)
+                COMPREPLY=( $(compgen -f -X '!*.jnl' -- "$cur") )
                 return 0
                 ;;
             -replay)
                 COMPREPLY=( $(compgen -f -- "$cur") )
                 return 0
                 ;;
-            -recover)
-                COMPREPLY=( $(compgen -f -X '!*.jnl' -- "$cur") )
+            -startup)
+                COMPREPLY=( $(compgen -f -- "$cur") )
                 return 0
                 ;;
             -script)

@@ -1,6 +1,35 @@
 # shellcheck shell=bash
 # bash completion for abaqus
 
+
+# Remove already‑used options from the list
+_remove_used_params() {
+    local used
+    used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]|-|--)' | tr '\n' ' ')
+    COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+}
+
+
+_QUEUE_LIST_CACHE=""
+
+_get_queue_list() {
+    local queues
+    queues=""
+
+    if [[ -n "$_QUEUE_LIST_CACHE" ]]; then
+        echo "$_QUEUE_LIST_CACHE"
+        return
+    fi
+
+    command -v scontrol > /dev/null && queues="$(scontrol -o show partitions | grep -Po 'PartitionName=\S+' | cut -d'=' -f2 | tr '\n' ' ')"
+    [[ -z "$queues" ]] && queues="small short big"
+    
+    _QUEUE_LIST_CACHE=$queue
+
+    COMPREPLY=( $(compgen -W "help hold $queues" -- "$cur") )
+}
+
+
 _abaqus_completion() {
     local cur prev
     COMPREPLY=()
@@ -116,9 +145,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$information_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]|-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -189,9 +216,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$cae_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -244,9 +269,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$optimization_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -275,9 +298,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=( $(compgen -W "$python_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
        return 0
     fi
 
@@ -302,9 +323,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=( $(compgen -W "$script_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z|-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -318,9 +337,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$lincensing_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
        return 0
     fi
 
@@ -353,9 +370,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$ascfil_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -386,9 +401,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$findkeyword_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -418,9 +431,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$fetch_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -466,9 +477,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$make_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -526,9 +535,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$redistadb_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -553,9 +560,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$upgrade_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -591,9 +596,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=( $(compgen -W "$odb2sim_opts" -- "$cur") )
  
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
       return 0
     fi
 
@@ -635,9 +638,7 @@ _abaqus_completion() {
 
         COMPREPLY=( $(compgen -W "$sim_version_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -673,9 +674,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=( $(compgen -W "$odb2sim_opts" -- "$cur") )
  
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
       return 0
     fi
 
@@ -703,9 +702,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=( $(compgen -W "$restartjoin_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]|-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
        return 0
     fi
 
@@ -746,9 +743,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=( $(compgen -W "$odbcombine_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -795,9 +790,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=( $(compgen -W "$odbreport_opts" -- "$cur") )
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
        return 0
     fi
 
@@ -838,9 +831,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=($(compgen -W "${tonastran_opts}" -- "$cur"))
  
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]|-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -960,9 +951,7 @@ _abaqus_completion() {
         esac
         COMPREPLY=($(compgen -W "${fromnastran_opts}" -- "$cur"))
 
-        # Remove already‑used options from the list
-        used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^(-|--)' | tr '\n' ' ')
-        COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+        _remove_used_params
         return 0
     fi
 
@@ -1073,19 +1062,14 @@ _abaqus_completion() {
             ;;
 
         -queue)
-            local queues
-            queues="$(scontrol -o show partitions | grep -Po 'PartitionName=\S+' | cut -d'=' -f2 | tr '\n' ' ')"
-            [[ -z "$queues" ]] && queues="small short big"
-            COMPREPLY=( $(compgen -W "help hold $queues" -- "$cur") )
+            _get_queue_list
             return 0
             ;;
     esac
 
     COMPREPLY=( $(compgen -W "$_job_opts" -- "$cur") )
 
-    # Remove already‑used options from the list
-    used=$(printf '%s\n' "${COMP_WORDS[@]:1}" | grep -E '^([a-z]|-|--)' | tr '\n' ' ')
-    COMPREPLY=($(printf '%s\n' "${COMPREPLY[@]}" | grep -vxF -f <(printf '%s\n' $used)))
+    _remove_used_params
 
 }
 

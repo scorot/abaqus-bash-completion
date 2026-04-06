@@ -37,12 +37,15 @@ _clean_help_file() {
     # 1. Find each "abaqus command" block
     # 2. Collapse multi-line block into single line
     # 3. Preserve all structure (brackets, pipes, equals, braces)
+    # 4. Handle special curly brace format: {cmd1 | cmd2=... | cmd3}
     echo "$help_content" | \
-    tail -n +8 | \
     grep -v -E '^[[:space:]]{0,2}[A-Z]' | \
     tr '\n' ' ' | \
     sed 's/[[:space:]]*\[=/\[=/g' | \
     sed 's/ abaqus /\nabaqus /g' | \
+    # Handle special curly brace format {help | information={...} | whereami}
+    # Converts to separate "abaqus command" lines for each option
+    sed 's/abaqus[[:space:]]\+{[[:space:]]*\([a-z]*\)[[:space:]]*|[[:space:]]*\([a-z_]*\)=[{][^}]*[}][^|]*|[[:space:]]*\([a-z]*\)[[:space:]]*}/abaqus \1\nabaqus \2=\nabaqus \3/g' | \
     tr -s ' ' # Trim and normalize
 }
 
@@ -175,7 +178,8 @@ _get_suboptions_with_dashes() {
 
 # Function 2c: Get proposed values for a specific suboption of a command
 # Accepts command name and suboption name, returns available values as space-separated string
-# Handles: {option1|option2}, [option1|option2], file type indicators, keyword options
+# Extracts the right-hand side of suboption=value patterns
+# Handles: {value1|value2}, [value1|value2], plain values
 _get_suboption_values() {
     local command="$1"
     local suboption="$2"
@@ -192,85 +196,39 @@ _get_suboption_values() {
     command="${command#-}"
     command="${command%=}"
     
-   
-    # Get the command block from cleaned help file (single line) 
+    # Get the cleaned help file command block (single-line blocks with all structure preserved)
     local cmd_block=$(_clean_help_file | \
         grep -E "^abaqus\s+${command}(\s|=|\{|\[)" | \
         head -1)
+    
     if [[ -z "$cmd_block" ]]; then
         return 1
     fi
-    echo "Debug: Command block for '${command}': $cmd_block" >&2
     
-    # Look for the suboption in the help content and extract its values
-    # Pattern 1: option={value1|value2|...} - can span multiple lines
-    # local values=$(echo "$cmd_block" | grep -oE "${suboption}=\{[^}]*\}" | sed "s/${suboption}={\(.*\)}/\1/")
-    # echo  "Debug: Found values $values for pattern option={...} for suboption '${suboption}'" >&2
-    # if [[ -n "$values" ]]; then
-    #     # Convert pipe-separated values to space-separated and clean up
-    #     echo "$values" | tr '|' ' ' | sed 's/[[:space:]]\+/ /g; s/^[[:space:]]*//; s/[[:space:]]*$//'
-    #     echo "Debug: Found values for pattern option={...} for suboption '${suboption}': $values" >&2
-    #     return 0
-    # fi
-    # echo "Debug: No values found for pattern option={...} for suboption '${suboption}'" >&2
-    
-    # Pattern 2: option=[value1|value2|...] - alternatives in brackets with pipes, can span multiple lines
-    values=$(echo "$cmd_block" | grep -oE "\[${suboption}[^\]]*\|[^\]]*\]" | sed 's/\[//g; s/\]//g; s/={[^}]*}//g')
+    # Pattern 1: suboption={value1|value2|...}
+    local values=$(echo "$cmd_block" | grep -oE "${suboption}=\{[^}]*\}")
+    #echo "Debug: cmd_block='$cmd_block', suboption='$suboption', values='$values'" >&2
     if [[ -n "$values" ]]; then
-        # Extract values, remove option name, convert pipes to spaces
-        echo "$values" | sed "s/${suboption}//g" | tr '|' ' ' | sed 's/[[:space:]]\+/ /g; s/^[[:space:]]*//; s/[[:space:]]*$//'
-        echo "Debug: Found values for pattern 2 option=[...] for suboption '${suboption}': $values" >&2
-        return 0
-    fi
-    echo "Debug: No values found for pattern 2 option=[...] for suboption '${suboption}'" >&2
-    
-    # Pattern 3: Detect file type keywords and special indicators
-    # Look for patterns like "input-file", "odb-file", "directory", etc.
-    if echo "$cmd_block" | grep -qE "${suboption}.*input.?name"; then
-        echo "input-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*input.?file"; then
-        echo "input-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*odb.?file"; then
-        echo "odb-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*odb.?name"; then
-        echo "odb-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*directory"; then
-        echo "directory"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*output.?file"; then
-        echo "output-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*python.?file"; then
-        echo "python-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*journal.?file"; then
-        echo "journal-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*sim.?file"; then
-        echo "sim-file"
-        return 0
-    fi
-    if echo "$cmd_block" | grep -qE "${suboption}.*op2.?file"; then
-        echo "op2-file"
+        # Extract content between braces and convert pipes to spaces
+        echo "$values" | sed "s/${suboption}={\(.*\)}/\1/" | tr '|' ' ' | sed 's/[[:space:]]\+/ /g; s/^[[:space:]]*//; s/[[:space:]]*$//'
         return 0
     fi
     
-    # Pattern 4: Standalone bracket keywords like [uniquelibs]
-    values=$(echo "$cmd_block" | grep -oE "\[${suboption}\]" | sed 's/\[//g; s/\]//g')
+    # Pattern 2: suboption=[value1|value2|...]
+    values=$(echo "$cmd_block" | grep -oE "${suboption}=\[[^\]]*\]")
+    #echo "Debug: cmd_block='$cmd_block', suboption='$suboption', values='$values'" >&2
     if [[ -n "$values" ]]; then
-        echo "$values"
+        # Extract content between brackets and convert pipes to spaces
+        echo "$values" | sed "s/${suboption}=\[\(.*\)\]/\1/" | tr '|' ' ' | sed 's/[[:space:]]\+/ /g; s/^[[:space:]]*//; s/[[:space:]]*$//'
+        return 0
+    fi
+    
+    # Pattern 3: suboption=value (match everything up to the next space, bracket, or pipe)
+    values=$(echo "$cmd_block" | grep -oE "${suboption}=[^[:space:]\[\{]*")
+    #echo "Debug: cmd_block='$cmd_block', suboption='$suboption', values='$values'" >&2
+    if [[ -n "$values" ]]; then
+        # Extract the part after the = and remove the trailing = and ]if present
+        echo "$values" | sed "s/${suboption}=//;s/\]//"
         return 0
     fi
     

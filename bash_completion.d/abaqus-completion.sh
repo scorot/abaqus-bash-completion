@@ -55,12 +55,15 @@ _clean_help_file() {
     # 1. Find each "abaqus command" block
     # 2. Collapse multi-line block into single line
     # 3. Preserve all structure (brackets, pipes, equals, braces)
+    # 4. Handle special curly brace format: {cmd1 | cmd2=... | cmd3}
     echo "$help_content" | \
-    tail -n +8 | \
     grep -v -E '^[[:space:]]{0,2}[A-Z]' | \
     tr '\n' ' ' | \
     sed 's/[[:space:]]*\[=/\[=/g' | \
     sed 's/ abaqus /\nabaqus /g' | \
+    # Handle special curly brace format {help | information={...} | whereami}
+    # Converts to separate "abaqus command" lines for each option
+    sed 's/abaqus[[:space:]]\+{[[:space:]]*\([a-z]*\)[[:space:]]*|[[:space:]]*\([a-z_]*\)=[{][^}]*[}][^|]*|[[:space:]]*\([a-z]*\)[[:space:]]*}/abaqus \1\nabaqus \2=\nabaqus \3/g' | \
     tr -s ' ' # Trim and normalize
 }
 
@@ -228,6 +231,47 @@ _abaqus_completion() {
     fi
 
     ###############################################
+    # cosimulation
+    ###############################################
+    if [[ " ${COMP_WORDS[*]} " == *" cosimulation "* ]]; then
+        local cosim_opts=$(_get_suboptions_with_dashes "$prev")
+
+       case "$prev" in
+        -job|-oldjob)
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            return 0
+            ;;
+        -input)
+            COMPREPLY=( $(compgen -f -X '!*.inp' -- "$cur") )
+            return 0
+            ;;
+        esac
+        COMPREPLY=( $(compgen -W "$cosim_opts" -- "$cur") )
+
+        _remove_used_params
+        return 0    
+    fi
+
+
+    ###############################################
+    # ascfil and append 
+    ###############################################
+    if [[ " ${COMP_WORDS[*]} " == *" ascfil "* ]] || [[ " ${COMP_WORDS[*]} " == *" append "* ]]; then
+        local ascfil_opts=$(_get_suboptions_with_dashes "$prev")
+
+       case "$prev" in
+        -job|-oldjob|input)
+            COMPREPLY=( $(compgen -f -X '!*.fil' -- "$cur") )
+            return 0
+            ;;
+        esac
+         COMPREPLY=( $(compgen -W "$ascfil_opts" -- "$cur") )
+
+        _remove_used_params
+        return 0
+    fi
+
+    ###############################################
     # cae and viewer
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" cae "* ]] || [[ " ${COMP_WORDS[*]} " == *" viewer "* ]] ; then
@@ -247,7 +291,7 @@ _abaqus_completion() {
                 return 0
                 ;;
             -noGUI)
-                COMPREPLY=( $(compgen -f -X '!*.py' -- "$cur") )
+                COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.py$|\.rpy$") )
                 return 0
                 ;;
         esac
@@ -367,57 +411,10 @@ _abaqus_completion() {
     fi
 
     ###############################################
-    # ascfil
+    # fetch or findkeyword
     ###############################################
-    if [[ " ${COMP_WORDS[*]} " == *" ascfil "* ]]; then
-        local ascfil_opts=$(_get_suboptions_with_dashes "ascfil")
-
-        case "$prev" in
-            -job|-oldjob)
-                COMPREPLY=( $(compgen -f -X '!*.fil' -- "$cur") )
-                return 0
-                ;;
-            -input)
-                COMPREPLY=( $(compgen -f -X '!*.inp' -- "$cur") )
-                return 0
-                ;;
-        esac
-
-        COMPREPLY=( $(compgen -W "$ascfil_opts" -- "$cur") )
-
-        _remove_used_params
-        return 0
-    fi
-
-    ###############################################
-    # findkeyword
-    ###############################################
-    if [[ " ${COMP_WORDS[*]} " == *" findkeyword "* ]]; then
-        local findkeyword_opts=$(_get_suboptions_with_dashes "findkeyword")
-
-        case "$prev" in
-            -job)
-                COMPREPLY=( $(compgen -f -- "$cur") )
-                return 0
-                ;;
-            -maximum)
-                COMPREPLY=( $(compgen -W "10 20 40" -- "$cur") )
-                return 0
-                ;;
-
-        esac
-
-        COMPREPLY=( $(compgen -W "$findkeyword_opts" -- "$cur") )
-
-        _remove_used_params
-        return 0
-    fi
-
-    ###############################################
-    # fetch
-    ###############################################
-    if [[ " ${COMP_WORDS[*]} " == *" fetch "* ]]; then
-        local fetch_opts=$(_get_suboptions_with_dashes "fetch")
+    if [[ " ${COMP_WORDS[*]} " == *" fetch "* ]] || [[ " ${COMP_WORDS[*]} " == *" findkeyword "* ]]; then
+        local fetch_opts=$(_get_suboptions_with_dashes "$prev")
 
         case "$prev" in
             -job)
@@ -459,6 +456,25 @@ _abaqus_completion() {
         esac
 
         COMPREPLY=( $(compgen -W "$make_opts" -- "$cur") )
+
+        _remove_used_params
+        return 0
+    fi
+
+   ###############################################
+    # mtxasm
+    ###############################################
+    if [[ " ${COMP_WORDS[*]} " == *" mtxasm "* ]]; then
+        local mtxasm_opts=$(_get_suboptions_with_dashes "mtxasm")
+
+        case "$prev" in
+            -job|-oldjob)
+                COMPREPLY=( $(compgen -f -X '!*.mtx' -- "$cur") )
+                return 0
+                ;;
+        esac
+
+        COMPREPLY=( $(compgen -W "$mtxasm_opts" -- "$cur") )
 
         _remove_used_params
         return 0
@@ -605,6 +621,8 @@ _abaqus_completion() {
         return 0
     fi
 
+
+
     ###############################################
     # substructurerecover
     ###############################################
@@ -663,12 +681,16 @@ _abaqus_completion() {
                 COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
                 return 0
                 ;;
-            -step)
+            -step|-frame)
                 COMPREPLY=( $(compgen -W "__LAST__" -- "$cur") )
                 return 0
                 ;;
-            -frame)
-                COMPREPLY=( $(compgen -W "__LAST__" -- "$cur") )
+            -field)
+                COMPREPLY=( $(compgen -W "U,S," -- "$cur") )
+                return 0
+                ;;
+            -history)
+                COMPREPLY=( $(compgen -W "U,RF," -- "$cur") )
                 return 0
                 ;;
         esac
@@ -793,97 +815,70 @@ _abaqus_completion() {
             COMPREPLY=( $(compgen -f -X '!*.inp' -- "$cur") )
             return 0
             ;;
-
         -oldjob)
             COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
             return 0
             ;;    
-
         -user)
             COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.f$|\.c$|\.o$" ) )
             return 0
             ;;
-
         -fil)
             COMPREPLY=( $(compgen -W "append new" -- "$cur") )
             return 0
             ;;
-
         -globalmodel)
             COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.odb$|\.sim$" ) )
             return 0
             ;;
-
         -cpus)
             COMPREPLY=( $(compgen -W "4 8 16 24 32 48" -- "$cur") )
             return 0
             ;;
-
         -domains|-port|-timeout)
             COMPREPLY=( $(compgen -W "1 2 4 8 16 32 64" -- "$cur") )
             return 0
             ;;
-
         -gpus)
             COMPREPLY=( $(compgen -W "1 2" -- "$cur") )
             return 0
             ;;
-
         -memory)
             COMPREPLY=( $(compgen -W "16000mb 32000mb 64000mb 128000mb" -- "$cur") )
             return 0
             ;;
-
         -parallel)
             COMPREPLY=( $(compgen -W "domain loop" -- "$cur") )
             return 0
             ;;
-
         -mp_mode)
             COMPREPLY=( $(compgen -W "mpi threads" -- "$cur") )
             return 0
             ;;
-
         -standard_parallel)
             COMPREPLY=( $(compgen -W "all solver" -- "$cur") )
             return 0
             ;;
-
         -double)
             COMPREPLY=( $(compgen -W "explicit both off constraint" -- "$cur") )
             return 0
             ;;
-
         -output_precision)
             COMPREPLY=( $(compgen -W "single full" -- "$cur") )
             return 0
             ;;
-
         -resultsformat)
             COMPREPLY=( $(compgen -W "odb sim both" -- "$cur") )
             return 0
             ;;
-
-        -field)
-            COMPREPLY=( $(compgen -W "odb sim" -- "$cur") )
-            return 0
-            ;;
-
-        -history)
-            COMPREPLY=( $(compgen -W "odb sim csv" -- "$cur") )
-            return 0
-            ;;
-
         -unconnected_regions)
             COMPREPLY=( $(compgen -W "yes no" -- "$cur") )
             return 0
             ;;
-
         -convert)
             COMPREPLY=( $(compgen -W "select odb state all" -- "$cur") )
             return 0
             ;;
-
         -queue)
             _get_queue_list
             return 0

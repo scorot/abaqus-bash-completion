@@ -1,7 +1,6 @@
 # shellcheck shell=bash
 # bash completion for abaqus
 
-
 # Remove already‑used options from the list
 _remove_used_params() {
     local used
@@ -30,6 +29,171 @@ _get_queue_list() {
 }
 
 
+# Global cache for abaqus help output
+_ABAQUS_HELP_CACHE=""
+
+# Helper: Convert multi-line help file or abaqus help command output into single-line command blocks
+# Removes section headers and collapses continuation lines
+# If no file argument is provided, uses cached output from 'abaqus help' command
+_clean_help_file() {
+
+    local help_content
+
+    # Check if we have cached help content
+    if [[ -z "$_ABAQUS_HELP_CACHE" ]]; then
+        # Cache is empty, fetch from abaqus help command
+        _ABAQUS_HELP_CACHE=$(abaqus help 2>/dev/null)
+        if [[ $? -ne 0 || -z "$_ABAQUS_HELP_CACHE" ]]; then
+            echo "Error: Could not get help from 'abaqus help' command" >&2
+            return 1
+        fi
+    fi
+    help_content="$_ABAQUS_HELP_CACHE"
+
+    
+    # Strategy:
+    # 1. Find each "abaqus command" block
+    # 2. Collapse multi-line block into single line
+    # 3. Preserve all structure (brackets, pipes, equals, braces)
+    echo "$help_content" | \
+    tail -n +8 | \
+    grep -v -E '^[[:space:]]{0,2}[A-Z]' | \
+    tr '\n' ' ' | \
+    sed 's/[[:space:]]*\[=/\[=/g' | \
+    sed 's/ abaqus /\nabaqus /g' | \
+    tr -s ' ' # Trim and normalize
+}
+
+# Function 1: Get all top-level Abaqus commands
+# Returns a list of all available Abaqus command names
+_get_all_abaqus_commands() {
+
+    # Extract command names from cleaned help file
+    # Get the first token after "abaqus", handling "command=parameter" and "command[=parameter]" formats
+    _clean_help_file | \
+    sed 's/^abaqus\s\+//' | \
+    awk '{
+        # Extract first token (word characters and underscores)
+        match($0, /[a-zA-Z_][a-zA-Z0-9_]*/)
+        if (RSTART > 0) {
+            cmd = substr($0, RSTART, RLENGTH)
+            next_char_pos = RSTART + RLENGTH
+            next_char = substr($0, next_char_pos, 1)
+            next_two = substr($0, next_char_pos, 2)
+            
+            # Check if followed by = or [=
+            if (next_char == "=" || next_two == "[=") {
+                cmd = cmd "="
+            }
+            if (cmd != "") print cmd
+        }
+    }' | \
+    sort -u
+}
+
+# Function 1b: Get all Abaqus commands with = sign prefixed by dash
+# Returns command names, where commands accepting parameters are prefixed with '-'
+# Example: job= becomes -job, cae stays cae
+_get_all_abaqus_commands_with_dashes() {
+    
+    _get_all_abaqus_commands | while read -r cmd; do
+        if [[ "$cmd" == *"=" ]]; then
+            # Remove trailing = and add dash prefix
+            echo "-${cmd%=}"
+        else
+            # Keep command as is
+            echo "$cmd"
+        fi
+    done
+}
+
+# Function 2: Get all suboptions for a specific command
+# Accepts a command name and returns all available parameters/options
+# Extracts both parameter=value and keyword-only options
+_get_suboptions() {
+    local command="$1"
+    
+    if [[ -z "$command" ]]; then
+        echo "Error: Command name required" >&2
+        return 1
+    fi
+    
+    # Remove trailing = sign and leading dash if present (since commands may now include them)
+    command="${command#-}"
+    command="${command%=}"
+    
+    # Get the command block from cleaned help file (single line) 
+    local cmd_block=$(_clean_help_file | \
+        grep -E "^abaqus\s+${command}(\s|=|\{|\[)" | \
+        head -1)
+    
+    if [[ -z "$cmd_block" ]]; then
+        return 1
+    fi
+    
+    # Extract parameter names followed by '=' or '[='
+    # Handles: word=value and word[=optional-value]
+    local params=$(echo "$cmd_block" | grep -oE '[a-zA-Z_][a-zA-Z0-9_]*\[?=' | sed 's/\[=/=/g' | sort -u)
+    
+    # Extract keyword options from bracket patterns
+    # Part 1: alternatives with pipes like [opt1 | opt2], can include nested brackets
+    local keywords=$(
+        # Extract alternative options in brackets
+        echo "$cmd_block" | \
+        grep -oE '\[[^]]*\|[^]]*\]' | \
+        sed 's/\[//g; s/\]//g; s/={[^}]*}//g; s/\[=[^]]*\]//g' | \
+        tr '|' '\n' | \
+        sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | \
+        grep -E '^[a-zA-Z_][a-zA-Z0-9_]*$'
+        
+        # Part 2: standalone bracket keywords like [uniquelibs] or [noFlexBody]
+        echo "$cmd_block" | \
+        grep -oE '\[[a-zA-Z_][a-zA-Z0-9_]*\]' | \
+        sed 's/\[//g; s/\]//g' | \
+        grep -E '^[a-zA-Z_]'
+    )
+
+    # Filter out keywords that match parameter base names (to avoid duplicates like convert and convert=)
+    # Using comm to cleanly remove keywords whose base name appears in params
+    local param_bases=$(echo "$params" | sed 's/=//g' | tr ' ' '\n' | sort -u)
+    keywords=$(comm -13 <(echo "$param_bases") <(echo "$keywords" | sort -u))
+    
+    # Combine and deduplicate
+    {
+        echo "$params"
+        echo "$keywords"
+    } | \
+    sort -u | \
+    grep -vE '^(all|off|on|both|yes|no|the|a|of|in|or|after|time)$' | \
+    xargs
+}
+
+
+# Function 2b: Get all suboptions for a specific command with = sign prefixed by dash
+# Returns suboptions where options accepting parameters are prefixed with '-'
+# Example: memory= becomes -memory, background stays background
+_get_suboptions_with_dashes() {
+    local command="$1"
+    
+    local options=$(_get_suboptions "$command")
+
+    if [[ -z "$options" ]]; then
+        return 1
+    fi
+    
+    # Convert each option: if it ends with =, remove = and add dash prefix
+    echo "$options" | tr ' ' '\n' | while read -r opt; do
+        if [[ "$opt" == *"=" ]]; then
+            # Remove trailing = and add dash prefix
+            echo "-${opt%=}"
+        else
+            # Keep option as is
+            echo "$opt"
+        fi
+    done | xargs
+}
+
+
 _abaqus_completion() {
     local cur prev
     COMPREPLY=()
@@ -39,109 +203,23 @@ _abaqus_completion() {
     cword=$COMP_CWORD
 
     # Main subcommands
-    local subcommands="
-    help
-    -information
-    -job
-    cse
-    cosimulation
-    fmu
-    cae
-    viewer
-    optimization
-    python
-    -script
-    doc
-    licensing
-    ascfil
-    append
-    findkeyword
-    fetch
-    make
-    redistadb
-    upgrade
-    sim_version
-    odb2sim
-    odbreport
-    restartjoin
-    substructurecombine
-    substructurerecover
-    odbcombine
-    emloads
-    mtxasm
-    fromnastran
-    tonastran
-    fromansys
-    frompamcrash
-    fromradioss
-    toOutput2
-    fromdyna
-    tozaero
-    adams
-    tosimpack
-    fromsimpack
-    toexcite
-    moldflow
-    encrypt
-    decrypt
-    sysVerify
-    whereami
-    "
+    local subcommands
+    subcommands=$( _get_all_abaqus_commands_with_dashes )
 
     # Options principales
-    local _job_opts="
-        analysis
-        datacheck
-        parametercheck
-        continue
-        -convert
-        recover
-        syntaxcheck
-        -information
-        -input
-        -user
-        -oldjob
-        -fil
-        -globalmodel
-        -cpus
-        -parallel
-        -domains
-        -dynamic_load_balancing
-        -mp_mode
-        -standard_parallel
-        -gpus
-        -memory
-        -queue
-        -double
-        -scratch
-        -output_precision
-        -resultsformat
-        -field
-        -history
-        -port
-        -host
-        -csedirector
-        -timeout
-        -unconnected_regions
-    "
+    local _job_opts=$(_get_suboptions_with_dashes "job")
+
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$subcommands" -- "$cur") )
         return 0
     fi
 
-
     ###############################################
     # information
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" -information "* ]]; then
-        local information_opts="environment
-                                local
-                                memory
-                                release 
-                                support
-                                system
-                                all"
+        local information_opts=$(_get_suboptions_with_dashes "information")
 
         COMPREPLY=( $(compgen -W "$information_opts" -- "$cur") )
 
@@ -153,31 +231,7 @@ _abaqus_completion() {
     # cae and viewer
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" cae "* ]] || [[ " ${COMP_WORDS[*]} " == *" viewer "* ]] ; then
-        local cae_opts="-database
-                        -replay
-                        -startup
-                        -script
-                        -noGUI
-                        noenvstartup
-                        noSavedOptions
-                        noSavedGuiPrefs
-                        noStartupDialog
-                        -custom
-                        -guiTester
-                        guiRecord
-                        guiNoRecord
-                        "
-
-        if [[ "$prev" == "viewer" ]]; then
-            COMPREPLY=( $(compgen -W "$cae_opts" -- "$cur") )
-            return 0
-        fi
-
-        if [[ "$prev" == "cae" ]]; then
-            # cae has an additionnal option -recover
-            COMPREPLY=( $(compgen -W "-recover $cae_opts" -- "$cur") )
-            return 0
-        fi
+        local cae_opts=$(_get_suboptions_with_dashes "$prev")
 
         case "$prev" in
             -database)
@@ -188,28 +242,12 @@ _abaqus_completion() {
                 COMPREPLY=( $(compgen -f -X '!*.jnl' -- "$cur") )
                 return 0
                 ;;
-            -replay)
-                COMPREPLY=( $(compgen -f -- "$cur") )
-                return 0
-                ;;
-            -startup)
-                COMPREPLY=( $(compgen -f -- "$cur") )
-                return 0
-                ;;
-            -script)
+            -replay|-startup|-script|-custom|-guiTester)
                 COMPREPLY=( $(compgen -f -- "$cur") )
                 return 0
                 ;;
             -noGUI)
                 COMPREPLY=( $(compgen -f -X '!*.py' -- "$cur") )
-                return 0
-                ;;
-            -custom)
-                COMPREPLY=( $(compgen -f -- "$cur") )
-                return 0
-                ;;
-            -guiTester)
-                COMPREPLY=( $(compgen -f -- "$cur") )
                 return 0
                 ;;
         esac
@@ -220,25 +258,11 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # optimization
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" optimization "* ]]; then
-        local optimization_opts="-task
-                                 -job
-                                 -cpus
-                                 -gpus
-                                 -memory
-                                 interactive
-                                 -globalmodel
-                                 -scratch
-                                 "
-
-        if [[ "$prev" == "upgrade" ]]; then
-            COMPREPLY=( $(compgen -W "$optimization_opts" -- "$cur") )
-            return 0
-        fi
+        local optimization_opts=$(_get_suboptions_with_dashes "optimization")
 
         case "$prev" in
             -task)
@@ -277,7 +301,6 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # python
     ###############################################
@@ -306,13 +329,12 @@ _abaqus_completion() {
        return 0
     fi
 
-
     ###############################################
     # script
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" -script "* ]]; then
 
-        local script_opts="-startup novenstartup"
+        local script_opts=$(_get_suboptions_with_dashes "script")
 
         if [[ "$prev" == "-script" ]]; then
             COMPREPLY=( $(compgen -f -X '!*.psf' -- "$cur") )
@@ -331,13 +353,12 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # licensing
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" licensing "* ]]; then
 
-        local lincensing_opts="lmstat lmdiag lmpath lmtools dslsstat reporttool"
+        local lincensing_opts=$(_get_suboptions_with_dashes "licensing")
 
         COMPREPLY=( $(compgen -W "$lincensing_opts" -- "$cur") )
 
@@ -345,24 +366,14 @@ _abaqus_completion() {
        return 0
     fi
 
-
     ###############################################
     # ascfil
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" ascfil "* ]]; then
-        local ascfil_opts="-job -oldjob -input"
-
-        if [[ "$prev" == "ascfil" ]]; then
-            COMPREPLY=( $(compgen -W "$ascfil_opts" -- "$cur") )
-            return 0
-        fi
+        local ascfil_opts=$(_get_suboptions_with_dashes "ascfil")
 
         case "$prev" in
-            -job)
-                COMPREPLY=( $(compgen -f -X '!*.fil' -- "$cur") )
-                return 0
-                ;;
-            -oldjob)
+            -job|-oldjob)
                 COMPREPLY=( $(compgen -f -X '!*.fil' -- "$cur") )
                 return 0
                 ;;
@@ -378,18 +389,11 @@ _abaqus_completion() {
         return 0
     fi
 
-
-
     ###############################################
     # findkeyword
     ###############################################
-    if [[ " ${COMP_WORDS[*]} " == *" ascfil "* ]]; then
-        local findkeyword_opts="-job -maximum"
-
-        if [[ "$prev" == "ascfil" ]]; then
-            COMPREPLY=( $(compgen -W "$findkeyword_opts" -- "$cur") )
-            return 0
-        fi
+    if [[ " ${COMP_WORDS[*]} " == *" findkeyword "* ]]; then
+        local findkeyword_opts=$(_get_suboptions_with_dashes "findkeyword")
 
         case "$prev" in
             -job)
@@ -409,17 +413,11 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # fetch
     ###############################################
-    if [[ " ${COMP_WORDS[*]} " == *" ascfil "* ]]; then
-        local fetch_opts="-job -input"
-
-        if [[ "$prev" == "ascfil" ]]; then
-            COMPREPLY=( $(compgen -W "$fetch_opts" -- "$cur") )
-            return 0
-        fi
+    if [[ " ${COMP_WORDS[*]} " == *" fetch "* ]]; then
+        local fetch_opts=$(_get_suboptions_with_dashes "fetch")
 
         case "$prev" in
             -job)
@@ -439,33 +437,14 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # make
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" make "* ]]; then
-        local make_opts="-job
-                         -library
-                         -user
-                         -directory
-                         -object_type
-                         uniquelibs"
-
-        if [[ "$prev" == "make" ]]; then
-            COMPREPLY=( $(compgen -W "$make_opts" -- "$cur") )
-            return 0
-        fi
+        local make_opts=$(_get_suboptions_with_dashes "make")
 
         case "$prev" in
-            -job)
-                COMPREPLY=( $(compgen -f -- "$cur") )
-                return 0
-                ;;
-            -library)
-                COMPREPLY=( $(compgen -f -- "$cur") )
-                return 0
-                ;;
-            -user)
+            -job|-library|-user)
                 COMPREPLY=( $(compgen -f -- "$cur") )
                 return 0
                 ;;
@@ -485,33 +464,14 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # redistadb
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" redistadb "* ]]; then
-        local redistadb_opts="-oldjob
-                              -newjob
-                              -input
-                              -step
-                              -increment
-                              -outdir
-                              -copyfiles
-                              -list
-                              help-yes
-                              "
-
-        if [[ "$prev" == "redistadb" ]]; then
-            COMPREPLY=( $(compgen -W "$redistadb_opts" -- "$cur") )
-            return 0
-        fi
+        local redistadb_opts=$(_get_suboptions_with_dashes "redistadb")
 
         case "$prev" in
-            -oldjob)
-                COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
-                return 0
-                ;;
-            -newjob)
+            -oldjob|-newjob)
                 COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
                 return 0
                 ;;
@@ -527,11 +487,7 @@ _abaqus_completion() {
                 COMPREPLY=( $(compgen -d -- "$cur") )
                 return 0
                 ;;
-            -copyfiles)
-                COMPREPLY=( $(compgen -W "yes" -- "$cur") )
-                return 0
-                ;;
-            -list)
+            -copyfiles|-list)
                 COMPREPLY=( $(compgen -W "yes" -- "$cur") )
                 return 0
                 ;;
@@ -543,17 +499,11 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # upgrade
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" upgrade "* ]]; then
-        local upgrade_opts="-job -odb"
-
-        if [[ "$prev" == "upgrade" ]]; then
-            COMPREPLY=( $(compgen -W "$upgrade_opts" -- "$cur") )
-            return 0
-        fi
+        local upgrade_opts=$(_get_suboptions_with_dashes "upgrade")
 
         case "$prev" in
             -job|-odb)
@@ -568,21 +518,12 @@ _abaqus_completion() {
         return 0
     fi
 
-
    ###############################################
     # odb2sim
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" odb2sim "* ]]; then
 
-        local odb2sim_opts="-odb
-                            -sim
-                            -log 
-                            -o2sdebug"
-
-        if [[ "$prev" == "odb2sim" ]]; then
-            COMPREPLY=( $(compgen -W "$odb2sim_opts" -- "$cur") )
-            return 0
-        fi
+        local odb2sim_opts=$(_get_suboptions_with_dashes "odb2sim")
 
         case "$prev" in
             -job|-sim|-log)
@@ -608,29 +549,10 @@ _abaqus_completion() {
     # sim_version
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" sim_version "* ]]; then
-        local sim_version_opts="-convert
-                                -query
-                                current
-                                -out
-                                -level
-                                help
-                                "
-
-        if [[ "$prev" == "sim_version" ]]; then
-            COMPREPLY=( $(compgen -W "$sim_version_opts" -- "$cur") )
-            return 0
-        fi
+        local sim_version_opts=$(_get_suboptions_with_dashes "sim_version")
 
         case "$prev" in
-            -convert)
-                COMPREPLY=( $(compgen -f -X '!*.sim' -- "$cur") )
-                return 0
-                ;;
-            -query)
-                COMPREPLY=( $(compgen -f -X '!*.sim' -- "$cur") )
-                return 0
-                ;;
-            -out)
+            -convert|-query|-out)
                 COMPREPLY=( $(compgen -f -X '!*.sim' -- "$cur") )
                 return 0
                 ;;
@@ -646,57 +568,11 @@ _abaqus_completion() {
         return 0
     fi
 
-
-    ###############################################
-    # odb2sim
-    ###############################################
-    if [[ " ${COMP_WORDS[*]} " == *" odb2sim "* ]]; then
-
-        local odb2sim_opts="-odb
-                            -sim
-                            -log 
-                            -o2sdebug"
-
-        if [[ "$prev" == "odb2sim" ]]; then
-            COMPREPLY=( $(compgen -W "$odb2sim_opts" -- "$cur") )
-            return 0
-        fi
-
-        case "$prev" in
-            -job|-sim|-log)
-                COMPREPLY=( $(compgen -f -- "$cur") )
-                return 0
-                ;;
-            -odb)
-                COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
-                return 0
-                ;;
-            -o2sdebug)
-                COMPREPLY=( $(compgen -W "0 1 2" -- "$cur") )
-                return 0
-            ;;
-        esac
-        COMPREPLY=( $(compgen -W "$odb2sim_opts" -- "$cur") )
- 
-        _remove_used_params
-      return 0
-    fi
-
-
     ###############################################
     #   restartjoin
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" restartjoin "* ]]; then
-        local restartjoin_opts="-originalodb
-                                -restartodb
-                                copyoriginal
-                                history
-                                compressresult"
-
-        if [[ "$prev" == "upgrade" ]]; then
-            COMPREPLY=( $(compgen -W "$restartjoin_opts" -- "$cur") )
-            return 0
-        fi
+        local restartjoin_opts=$(_get_suboptions_with_dashes "restartjoin")
 
         case "$prev" in
             -originalodb|-restartodb)
@@ -710,30 +586,50 @@ _abaqus_completion() {
        return 0
     fi
 
-
     ###############################################
     # substructurecombine
     ###############################################
-    # TBD
+   if [[ " ${COMP_WORDS[*]} " == *" substructurecombine "* ]]; then
 
+        local substructurecombine_opts=$(_get_suboptions_with_dashes "substructurecombine")
+
+        case "$prev" in
+            -job|-input)
+                COMPREPLY=( $(compgen -f -- "$cur") )
+                return 0
+                ;;
+        esac
+        COMPREPLY=( $(compgen -W "$substructurecombine_opts" -- "$cur") )
+
+        _remove_used_params
+        return 0
+    fi
 
     ###############################################
     # substructurerecover
     ###############################################
-    # TBD
+   if [[ " ${COMP_WORDS[*]} " == *" substructurerecover "* ]]; then
 
+        local substructurerecover_opts=$(_get_suboptions_with_dashes "substructurerecover")
+
+        case "$prev" in
+            -job|-input)
+                COMPREPLY=( $(compgen -f -- "$cur") )
+                return 0
+                ;;
+        esac
+        COMPREPLY=( $(compgen -W "$substructurerecover_opts" -- "$cur") )
+
+        _remove_used_params
+        return 0
+    fi
 
     ###############################################
     # odbcombine
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" odbcombine "* ]]; then
 
-        local odbcombine_opts="-job -input -verbose"
-
-        if [[ "$prev" == "upgrade" ]]; then
-            COMPREPLY=( $(compgen -W "$odbcombine_opts" -- "$cur") )
-            return 0
-        fi
+        local odbcombine_opts=$(_get_suboptions_with_dashes "odbcombine")
 
         case "$prev" in
             -job|-input)
@@ -756,30 +652,14 @@ _abaqus_completion() {
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" odbreport "* ]]; then
 
-        local odbreport_opts="-job
-                                -odb
-                                -mode
-                                all
-                                mesh
-                                sets
-                                results
-                                -step
-                                -frame
-                                -framevalue
-                                -field
-                                components"
-
-        if [[ "$prev" == "odbreport" ]]; then
-            COMPREPLY=( $(compgen -W "$odbreport_opts" -- "$cur") )
-            return 0
-        fi
+        local odbreport_opts=$(_get_suboptions_with_dashes "odbreport")
 
         case "$prev" in
             -job)
                 COMPREPLY=( $(compgen -f -- "$cur") )
                 return 0
                 ;;          
-            --odb)
+            -odb)
                 COMPREPLY=( $(compgen -f -X '!*.odb' -- "$cur") )
                 return 0
                 ;;
@@ -798,22 +678,12 @@ _abaqus_completion() {
        return 0
     fi
 
-
     ###############################################
     # tonastran
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" tonastran "* ]]; then
 
-        local tonastran_opts="-job
-                              -input
-                              -bdf_format
-                              sim2dmig
-                              -complex"
-
-        if [[ "$prev" == "tonastran" ]]; then
-           COMPREPLY=( $(compgen $tonastran_opts -- "$cur") )
-           return 0
-        fi
+        local tonastran_opts=$(_get_suboptions_with_dashes "tonastran")
 
         case "$prev" in
            -job)
@@ -844,32 +714,7 @@ _abaqus_completion() {
     ###############################################
     if [[ " ${COMP_WORDS[*]} " == *" fromnastran "* ]]; then
 
-       local fromnastran_opts="-job
-                               -input
-                               -wtmass_fixup
-                               -loadcases
-                               -pbar_zero_reset
-                               -surface_based_coupling
-                               -beam_offset_coupling
-                               -beam_orientation_vector
-                               -cbar
-                               -cquad4
-                               -chexa
-                               -ctetra
-                               -cpyram
-                               -cshear
-                               -plotel
-                               -cdh_weld
-                               -dmig2sim
-                               -op2file1
-                               -op2file2
-                               -op2target
-                               "
-
-       if [[ "$prev" == "-fromnastran" ]]; then
-           COMPREPLY=( $(compgen -W "$fromnastran_opts" -- "$cur") )
-           return 0
-       fi
+       local fromnastran_opts=$(_get_suboptions_with_dashes "fromnastran")
 
        case "$prev" in
            -job)
@@ -880,28 +725,12 @@ _abaqus_completion() {
                 COMPREPLY=( $(compgen -f -- "$cur" | grep -E "\.bdf$|\.nas$|\.dat$" ) )
                 return 0
                 ;;
-            -wtmass_fixup)
-                COMPREPLY=( $(compgen -W "ON OFF" -- "$cur") )
-                return 0
-                ;;
-            -loadcases)
+            -wtmass_fixup|-loadcases|-surface_based_coupling|-beam_offset_coupling|-beam_orientation_vector|-plotel)
                 COMPREPLY=( $(compgen -W "ON OFF" -- "$cur") )
                 return 0
                 ;;
             -pbar_zero_reset)
                 COMPREPLY=( )
-                return 0
-                ;;
-            -surface_based_coupling)
-                COMPREPLY=( $(compgen -W "ON OFF" -- "$cur") )
-                return 0
-                ;;
-            -beam_offset_coupling)
-                COMPREPLY=( $(compgen -W "ON OFF" -- "$cur") )
-                return 0
-                ;;
-            -beam_orientation_vector)
-                COMPREPLY=( $(compgen -W "ON OFF" -- "$cur") )
                 return 0
                 ;;
             -cbar)
@@ -928,10 +757,6 @@ _abaqus_completion() {
                 COMPREPLY=( $(compgen -W "UEL SHEAR4" -- "$cur") )
                 return 0
                 ;;
-            -plotel)
-                COMPREPLY=( $(compgen -W "ON OFF" -- "$cur") )
-                return 0
-                ;;
             -cdh_weld)
                 COMPREPLY=( $(compgen -W "OFF RIGID COMPLIANT" -- "$cur") )
                 return 0
@@ -940,12 +765,8 @@ _abaqus_completion() {
                 COMPREPLY=( $(compgen -W "GENERIC SUBSTRUCTURE" -- "$cur") )
                 return 0
                 ;;
-            -op2file1)
+            -op2file1|-op2file2)
                 COMPREPLY=( $(compgen -f -X "!*.op2" -- "$cur") )
-                return 0
-                ;;
-            -op2file2)
-                COMPREPLY=( $(compgen -W -X "!*.op2" -- "$cur") )
                 return 0
                 ;;
             -op2target)
@@ -959,7 +780,6 @@ _abaqus_completion() {
         return 0
     fi
 
-
     ###############################################
     # whereami
     ###############################################
@@ -967,7 +787,6 @@ _abaqus_completion() {
         COMPREPLY=( )
         return 0
     fi
-
 
     case "$prev" in
         -job|-input)
